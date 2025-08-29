@@ -12,12 +12,105 @@ import mne
 import glob
 import matplotlib.pyplot as plt
 import networkx as nx
+from dataclasses import dataclass
 
 fmin_arr = (4, 4,  8,  8,  10, 13, 20, 30, 30, 4)
 fmax_arr = (8, 30, 13, 10, 13, 20, 30, 40, 45, 45)
 # A weirdo for the sake of usability. 
 freq_idcs = {(fmin, fmax): i for i, (fmin, fmax) in enumerate(zip(fmin_arr, fmax_arr))}
 
+@dataclass
+class Result:
+   p_threshold: str
+   CPM_order: int
+   corr_mode: str
+   atlas: str
+   dataset: str
+   method: str
+   corr_sign: str
+   freq: str
+   r: float
+   p: float
+   corrected_p: float
+   r2: float
+   behav: np.ndarray
+   pred: np.ndarray
+   mae: float
+   rmse: float
+
+   def __str__(self):
+       return f'p-value threshold: {self.p_threshold}, CPM order: {self.CPM_order}, atlas: {self.atlas}, dataset: {self.dataset}\n' + \
+   f'FC method: {self.method}, correlation sign: {self.corr_sign}, frequency: {self.freq}, r: {round(self.r, 3)}, p: {round(self.p, 8)}, corrected p: {round(self.corrected_p, 4)}'
+
+@dataclass
+class SteigerResult:
+   p_threshold: str
+   CPM_order: int
+   corr_mode: str
+   atlas: str
+   dataset: str
+   method: str
+   corr_sign: str
+   freq: str
+   excluded_edge: str
+   pearson_r: float
+   pearson_p: float
+   corrected_pearson_p: float
+   steiger_z: float
+   steiger_p: float
+   corrected_steiger_p: float
+                
+@dataclass 
+class ResultEdges:
+    p_threshold: str
+    CPM_order: int
+    corr_mode: str
+    atlas: str
+    dataset: str
+    method: str
+    corr_sign: str
+    freq: str
+    valuable_edges: list[str]
+
+    
+def steiger_res_from_res(result):
+    steiger_res = SteigerResult(p_threshold=result.p_threshold, CPM_order=result.CPM_order,
+                                corr_mode=result.corr_mode, atlas=result.atlas, dataset=result.dataset,
+                                method=result.method, corr_sign=result.corr_sign,
+                                freq=result.freq, excluded_edge='', pearson_r=np.nan, 
+                                pearson_p=np.nan, corrected_pearson_p=np.nan, steiger_z=np.nan,
+                                steiger_p=np.nan, corrected_steiger_p=np.nan)
+    return steiger_res
+
+def parse_result_file(res_dir, der_res_dir):
+    raw_results = read_csv(der_res_dir + '\\results.csv')[1:]
+    results = []
+    for result in raw_results:
+        p_threshold = result[0]
+        CPM_order = result[1]
+        corr_mode = 'partial'
+        atlas = result[2]
+        dataset = result[3]
+        method = result[4] 
+        corr_sign = result[5]
+        freq = result[6]
+        r = float(result[7])
+        p = float(result[8])
+        corrected_p = float(result[9])
+        r2 = float(result[10])
+        mae = float(result[11])
+        rmse = float(result[12])
+        
+        behav = np.load(f'{res_dir}\\{method}\\{atlas} {dataset}\\{corr_mode}\\{CPM_order}\\{p_threshold}\\memory_{freq}.npy')
+        pred = np.load(f'{res_dir}\\{method}\\{atlas} {dataset}\\{corr_mode}\\{CPM_order}\\{p_threshold}\\{corr_sign}_pred_{freq}.npy')
+        result = Result(p_threshold = p_threshold, CPM_order = CPM_order, corr_mode = corr_mode, 
+                        atlas = atlas, dataset = dataset, method = method, 
+                        corr_sign = corr_sign, freq = freq, r = r, 
+                        p = p, corrected_p = corrected_p, r2 = r2, 
+                        behav = behav, pred = pred, mae = mae, rmse = rmse)
+        results.append(result)
+    return results
+   
 def modularity_curried(community_method):
     def func(G, weight):
         return nx.community.modularity(G, community_method(G), weight)
@@ -170,7 +263,7 @@ def get_Raven_age():
                       for row in raw_behav_raven}
     return raven_age_dict
 
-def get_WAIS_intel(return_PIQ=True):
+def get_WAIS_intel(return_test='PIQ'):
     """
     Gets WAIS intelligence score from Cuban Brain Map Project, namely, 
     WAIS_III.csv file, assuming the file exists in the same directory the 
@@ -191,7 +284,12 @@ def get_WAIS_intel(return_PIQ=True):
         Returns a dictionary that maps participant IDs onto their IQ scores.
 
     """
-    IQ_index = 3 if return_PIQ else 1
+    if return_test == 'PIQ':
+        IQ_index = 3  
+    elif return_test == 'FSIQ':
+        IQ_index = 1
+    elif return_test == 'VIQ':
+        IQ_index = 2
     behav_PIQ = read_csv('WAIS_III.csv')
     
     # Two first rows are title and header, so are omitted. 0th column is 
@@ -204,7 +302,7 @@ def get_WAIS_intel(return_PIQ=True):
     PIQ_with_ID_space_removed = PIQ_with_ID[PIQ_with_ID[:, 1] != '']
     PIQ_dict = {row[0]: row[1].astype(int) for row in PIQ_with_ID_space_removed}
     return PIQ_dict
- 
+
 def get_WAIS_sex():
     data = read_csv('Demographic_data.csv')   
     sex = data[2:, [0, 1]]
@@ -231,26 +329,25 @@ def get_LPS_intel():
         Returns a dictionary that maps participant IDs onto their IQ scores.
 
     """
-    intel = read_csv('D:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\Cognitive_Test_Battery_LEMON\LPS\\LPS.csv')
+    intel = read_csv('F:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\Cognitive_Test_Battery_LEMON\LPS\\LPS.csv')
     lps = intel[1:]
     lps_dict = {row[0]: int(row[1]) if row[2] == '' else np.nan for row in lps}
     return lps_dict
 
 def get_WST_intel():
-    intel = read_csv('D:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\Cognitive_Test_Battery_LEMON\WST\\WST.csv')
+    intel = read_csv('F:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\Cognitive_Test_Battery_LEMON\WST\\WST.csv')
     wst = intel[1:, [0, 3]]
     wst_dict = {row[0]: int(row[1]) for row in wst}
     return wst_dict
 
 def get_RWT_intel():
     intel = read_csv('F:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\Cognitive_Test_Battery_LEMON\RWT\RWT.csv')
-    rwt = intel[1:, [0, 1]]
-    rwt = rwt[rwt[:,1] != '']
-    rwt_dict = {row[0]: float(row[1]) for row in rwt}
+    rwt = intel[1:]
+    rwt_dict = {row[0]: float(row[1]) - float(row[3]) if row[1] != '' and row[12] == '' else np.nan for row in rwt}
     return rwt_dict
     
 def get_German_sex():
-    demo = read_csv('D:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\\META_File_IDs_Age_Gender_Education_Drug_Smoke_SKID_LEMON.csv')
+    demo = read_csv('F:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\\META_File_IDs_Age_Gender_Education_Drug_Smoke_SKID_LEMON.csv')
     sex = demo[1:, [0, 1]]
     def sex_selector(x): 
         if x == '1': return 'F'
@@ -260,7 +357,7 @@ def get_German_sex():
     return sex_dict
 
 def get_German_age():
-    demo = read_csv('D:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\\META_File_IDs_Age_Gender_Education_Drug_Smoke_SKID_LEMON.csv')
+    demo = read_csv('F:\EEG_data\German dataset\MPI-Leipzig_Mind-Brain-Body-LEMON\Behavioural_Data_MPILMBB_LEMON\\META_File_IDs_Age_Gender_Education_Drug_Smoke_SKID_LEMON.csv')
     age = demo[1:, [0, 2]]
     age_dict = {row[0]: (int(row[1].split('-')[1]) + int(row[1].split('-')[0])) / 2
                 for row in age}
